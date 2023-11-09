@@ -6,6 +6,10 @@ use Exception;
 use Kirby\Cms\App;
 use Kirby\Cms\Collection;
 use Kirby\Toolkit\Str;
+use Kirby\Kql\Interceptors\Cms\Block;
+use Kirby\Kql\Interceptors\Cms\File;
+use Kirby\Kql\Interceptors\Cms\Page;
+use Kirby\Kql\Interceptors\Cms\User;
 
 /**
  * ...
@@ -99,6 +103,7 @@ class Kql
 
 		$query   = $input['query']  ?? 'site';
 		$select  = $input['select'] ?? null;
+		$models  = $input['models'] ?? [];
 		$options = ['pagination' => $input['pagination'] ?? null];
 
 		// check for invalid queries
@@ -107,12 +112,13 @@ class Kql
 		}
 
 		$result = static::query($query, $model);
-		return static::select($result, $select, $options);
+		return static::select($result, $select, $models, $options);
 	}
 
 	public static function select(
 		$data,
 		array|string|null $select = null,
+		array $models = [],
 		array $options = []
 	) {
 		if ($select === null) {
@@ -124,16 +130,40 @@ class Kql
 		}
 
 		if ($data instanceof Collection) {
-			return static::selectFromCollection($data, $select, $options);
+			return static::selectFromCollection($data, $select, $models, $options);
 		}
 
 		if (is_object($data) === true) {
-			return static::selectFromObject($data, $select);
+			return static::selectFromObject($data, $select, $models);
 		}
 
 		if (is_array($data) === true) {
 			return static::selectFromArray($data, $select);
 		}
+	}
+
+	public static function selectByType(
+		$data,
+		array $models = [],
+		$fallback = []
+	) {
+		if ($data instanceof Block) {
+			return $models[$data->type()] ?? $fallback;
+		}
+
+		if ($data instanceof Page) {
+			return $models[$data->intendedTemplate()] ?? $fallback;
+		}
+
+		if ($data instanceof File) {
+			return $models[$data->template()] ?? $fallback;
+		}
+
+		if ($data instanceof User) {
+			return $models[$data->role()->name()] ?? $fallback;
+		}
+
+		return $fallback;
 	}
 
 	/**
@@ -165,6 +195,7 @@ class Kql
 	public static function selectFromCollection(
 		Collection $collection,
 		array|string $select,
+		array $models = [],
 		array $options = []
 	): array {
 		if ($options['pagination'] ?? false) {
@@ -174,7 +205,7 @@ class Kql
 		$data = [];
 
 		foreach ($collection as $model) {
-			$data[] = static::selectFromObject($model, $select);
+			$data[] = static::selectFromObject($model, $select, $models);
 		}
 
 		if ($pagination = $collection->pagination()) {
@@ -198,7 +229,8 @@ class Kql
 	 */
 	public static function selectFromObject(
 		object $object,
-		array|string $select
+		array|string $select,
+		array $models = []
 	): array {
 		// replace actual object with intercepting proxy class
 		$object = Interceptor::replace($object);
@@ -206,6 +238,10 @@ class Kql
 
 		if (is_string($select) === true) {
 			$select = Str::split($select);
+		}
+
+		if (count($models) > 0) {
+			$select = static::selectByType($object, $models, $select);
 		}
 
 		foreach ($select as $key => $selection) {
